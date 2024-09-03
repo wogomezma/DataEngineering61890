@@ -1,12 +1,12 @@
-# Utiliza una imagen base de Python con Airflow
+# Usa la imagen oficial de Apache Airflow
 FROM apache/airflow:2.6.3-python3.10
 
 # Instala las dependencias necesarias
 RUN pip install --no-cache-dir pandas sodapy psycopg2-binary
 
-# Copia los archivos del DAG y keys.json
-COPY entrega_3_data_engineering_walter_gomez_.py /opt/airflow/dags/entrega_3_data_engineering_walter_gomez_.py
-COPY key.json /opt/airflow/dags/key.json
+# Copia los archivos del DAG y la llave
+COPY entrega_3_data_engineering_walter_gomez_.py /opt/airflow/dags/
+COPY key.json /opt/airflow/dags/
 
-# Configura Airflow para que utilice la entrada predeterminada
+# Ejecuta el webserver de Airflow
 CMD ["airflow", "webserver"]
