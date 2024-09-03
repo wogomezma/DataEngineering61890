@@ -8,9 +8,5 @@ RUN pip install --no-cache-dir pandas sodapy psycopg2-binary
 COPY entrega_3_data_engineering_walter_gomez_.py /opt/airflow/dags/entrega_3_data_engineering_walter_gomez_.py
 COPY key.json /opt/airflow/dags/key.json
 
-# Exposición del puerto de Airflow
-EXPOSE 8080
-
-# Configuración para inicializar Airflow
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["webserver"]
+# Configura Airflow para que utilice la entrada predeterminada
+CMD ["airflow", "webserver"]
