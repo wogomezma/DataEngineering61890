@@ -7,8 +7,8 @@ services:
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
       - AIRFLOW__CORE__FERNET_KEY=tEZTGaML98ahg83fqt9r_5S9iP72MmlbhSntuFlT2HY=
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - _AIRFLOW_WWW_USER_USERNAME=admin
-      - _AIRFLOW_WWW_USER_PASSWORD=admin123
+      - AIRFLOW_WWW_USER_USERNAME=admin
+      - AIRFLOW_WWW_USER_PASSWORD=admin123
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
