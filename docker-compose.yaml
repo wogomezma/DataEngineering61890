@@ -5,7 +5,7 @@ services:
     image: apache/airflow:2.6.3-python3.10
     environment:
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
-      - AIRFLOW__CORE__FERNET_KEY=TU_CLAVE_GENERADA_AQUÍ
+      - AIRFLOW__CORE__FERNET_KEY=tEZTGaML98ahg83fqt9r_5S9iP72MmlbhSntuFlT2HY=
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - _AIRFLOW_WWW_USER_USERNAME=${AIRFLOW_USERNAME}
       - _AIRFLOW_WWW_USER_PASSWORD=${AIRFLOW_PASSWORD}
