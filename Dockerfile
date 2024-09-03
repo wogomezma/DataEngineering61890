@@ -1,12 +1,20 @@
-# Usa la imagen oficial de Apache Airflow
-FROM apache/airflow:2.6.3-python3.10
+FROM apache/airflow:slim-latest-python3.11
 
-# Instala las dependencias necesarias
-RUN pip install --no-cache-dir pandas sodapy psycopg2-binary
+COPY requirements.txt /requirements.txt
 
-# Copia los archivos del DAG y la llave
-COPY entrega_3_data_engineering_walter_gomez_.py /opt/airflow/dags/
-COPY key.json /opt/airflow/dags/
+RUN pip install --no-cache-dir -r /requirements.txt
 
-# Ejecuta el webserver de Airflow
-CMD ["airflow", "webserver"]
+USER root
+
+RUN apt-get update && apt-get install -y \
+    wget
+
+COPY start.sh /start.sh
+
+RUN chmod +x /start.sh
+
+USER airflow
+
+ENTRYPOINT ["/bin/bash","/start.sh"]
+
+EXPOSE 8080

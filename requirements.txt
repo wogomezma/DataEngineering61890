@@ -1,0 +1,7 @@
+sodapy
+pandas
+psycopg2-binary
+SQLAlchemy
+sqlalchemy-redshift
+python-dotenv
+pendulum
