@@ -6,6 +6,7 @@
     "redshift_host": "data-engineer-cluster.cyhh5bfevlmn.us-east-1.redshift.amazonaws.com",
     "redshift_port": "5439",
     "redshift_database": "data-engineer-database",
-    "redshift_schema": "waltart_coderhouse"
+    "redshift_schema": "waltart_coderhouse",
+    "AIRFLOW_USERNAME": "admin",
+    "AIRFLOW_PASSWORD": "admin123"
 }
-

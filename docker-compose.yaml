@@ -5,17 +5,19 @@ services:
     image: apache/airflow:2.6.3-python3.10
     environment:
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
-      - AIRFLOW__CORE__FERNET_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
+      - AIRFLOW__CORE__FERNET_KEY=TU_CLAVE_GENERADA_AQUÍ
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - _AIRFLOW_WWW_USER_USERNAME=${AIRFLOW_USERNAME}
+      - _AIRFLOW_WWW_USER_PASSWORD=${AIRFLOW_PASSWORD}
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+      - ./keys.json:/opt/airflow/keys.json
     ports:
       - "8080:8080"
-    command: "airflow webserver"
-    entrypoint: /bin/bash -c 'airflow db init && exec airflow webserver'
-  
+    entrypoint: /bin/bash -c 'airflow db init && airflow users create --username ${AIRFLOW_USERNAME} --password ${AIRFLOW_PASSWORD} --firstname Air --lastname Flow --role Admin --email admin@example.com && exec airflow webserver'
+
   airflow-init:
     image: apache/airflow:2.6.3-python3.10
     entrypoint: /bin/bash
