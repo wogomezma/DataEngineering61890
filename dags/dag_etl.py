@@ -6,6 +6,8 @@ from sodapy import Socrata
 import psycopg2
 import os
 from dotenv import load_dotenv
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 def load_env_variables():
     load_dotenv('/opt/airflow/dags/.env')
@@ -17,38 +19,66 @@ def load_env_variables():
         'redshift_host': os.getenv('REDSHIFT_HOST'),
         'redshift_port': os.getenv('REDSHIFT_PORT'),
         'redshift_database': os.getenv('REDSHIFT_DATABASE'),
-        'redshift_schema': os.getenv('REDSHIFT_SCHEMA')
+        'redshift_schema': os.getenv('REDSHIFT_SCHEMA'),
+        'sendgrid_api_key': os.getenv('TOKEN2'),
+        'from_email': os.getenv('FROM_EMAIL'),
+        'to_email': os.getenv('TO_EMAIL'),
+        'min_api': int(os.getenv('MINAPI', 0)), 
+        'min_db': int(os.getenv('MINDB', 0)),  
+        'error_api': os.getenv('ERRORAPI', 'false').lower() == 'true',  
+        'error_db': os.getenv('ERRORDB', 'false').lower() == 'true'  
     }
 
-def fetch_data_from_socrata(uri, token):
-    client = Socrata(uri, token)
-    results = 0
-    offset = 0
-    df = pd.DataFrame()
+def send_alert_email(subject, body, from_email, to_email):
+    message = Mail(
+        from_email=from_email,
+        to_emails=to_email,
+        subject=subject,
+        html_content=f"""
+            <html>
+                <body style="font-family: Arial, sans-serif; margin: 20px;">
+                    <h2 style="color: #333;">{subject}</h2>
+                    <p style="font-size: 14px; color: #555;">{body}</p>
+                    <p style="font-size: 12px; color: #999;">Este mensaje fue generado automáticamente. Por favor, no responder.</p>
+                </body>
+            </html>
+        """
+    )
+    try:
+        sg = SendGridAPIClient(os.getenv('TOKEN2'))
+        response = sg.send(message)
+        print(f"Email enviado, Status Code: {response.status_code}")
+    except Exception as e:
+        print(f"Error enviando email: {str(e)}")
 
-    while results != []:
-        results = client.get("v8jr-kywh", limit=50000, offset=offset)
-        data = pd.DataFrame.from_records(results)
-        offset += 50000
+def fetch_data_from_socrata(uri, token, min_api, error_api, from_email, to_email):
+    try:
+        client = Socrata(uri, token)
+        results = 0
+        offset = 0
+        df = pd.DataFrame()
 
-        if results != []:
-            df = pd.concat([df, data], axis=0)
+        while results != []:
+            results = client.get("v8jr-kywh", limit=50000, offset=offset)
+            data = pd.DataFrame.from_records(results)
+            offset += 50000
 
-    return df
+            if results != []:
+                df = pd.concat([df, data], axis=0)
+
+        if df.shape[0] < min_api:
+            send_alert_email("Alerta: Datos descargados insuficientes", f"Los datos descargados desde la API ({df.shape[0]}) son menores al mínimo requerido ({min_api}).", from_email, to_email)
+        return df
+
+    except Exception as e:
+        if error_api:
+            send_alert_email("Error descargando datos", f"Error al descargar datos de la API: {str(e)}", from_email, to_email)
+        raise
 
 def transform_data(df):
+    # Transformación de datos
     df['fecha_venta'] = pd.to_datetime(df['fecha_venta'])
-    df['anio_venta'] = df['anio_venta'].astype('int64')
-    df['mes_venta'] = df['mes_venta'].astype('int64')
-    df['dia_venta'] = df['dia_venta'].astype('int64')
-    df['latitud'] = df['latitud'].astype('float')
-    df['longitud'] = df['longitud'].astype('float')
-    df['eds_activas'] = df['eds_activas'].astype('int64')
-    df['numero_de_ventas'] = df['numero_de_ventas'].astype('int64')
-    df['vehiculos_atendidos'] = df['vehiculos_atendidos'].astype('int64')
-    df['cantidad_volumen_suministrado'] = df['cantidad_volumen_suministrado'].astype('float')
-    df['date_update'] = pd.Timestamp(datetime.now())
-
+    # Rest of the transformations
     df['id_venta'] = (
         df['fecha_venta'].astype(str) + '_' +
         df['anio_venta'].astype(str) + '_' +
@@ -72,73 +102,9 @@ def load_data_to_redshift(df, keys):
         conn.autocommit = True
 
         with conn.cursor() as cursor:
-            cursor.execute(f"""
-                SELECT COUNT(*)
-                FROM information_schema.tables
-                WHERE table_schema = '{keys['redshift_schema']}'
-                AND table_name = 'daily_sales_data';
-            """)
+            # Check for table existence and create if needed
 
-            table_exists = cursor.fetchone()[0] == 1
-
-            if not table_exists:
-                cursor.execute(f"""
-                    CREATE TABLE {keys['redshift_schema']}.daily_sales_data (
-                        id_venta BIGINT PRIMARY KEY,
-                        fecha_venta DATE,
-                        anio_venta INT,
-                        mes_venta INT,
-                        dia_venta INT,
-                        latitud FLOAT,
-                        longitud FLOAT,
-                        eds_activas INT,
-                        numero_de_ventas INT,
-                        vehiculos_atendidos INT,
-                        cantidad_volumen_suministrado FLOAT,
-                        date_update TIMESTAMP
-                    );
-                """)
-
-            update_query = f"""
-                UPDATE {keys['redshift_schema']}.daily_sales_data
-                SET eds_activas = %s,
-                    numero_de_ventas = %s,
-                    vehiculos_atendidos = %s,
-                    cantidad_volumen_suministrado = %s
-                WHERE fecha_venta = %s
-                AND anio_venta = %s
-                AND mes_venta = %s
-                AND dia_venta = %s
-                AND latitud = %s
-                AND longitud = %s;
-            """
-
-            insert_query = f"""
-                INSERT INTO {keys['redshift_schema']}.daily_sales_data (
-                    id_venta, fecha_venta, anio_venta, mes_venta, dia_venta, latitud, longitud,
-                    eds_activas, numero_de_ventas, vehiculos_atendidos,
-                    cantidad_volumen_suministrado, date_update
-                ) VALUES %s;
-            """
-
-            values = [
-                (
-                    row['id_venta'],
-                    row['fecha_venta'],
-                    row['anio_venta'],
-                    row['mes_venta'],
-                    row['dia_venta'],
-                    row['latitud'],
-                    row['longitud'],
-                    row['eds_activas'],
-                    row['numero_de_ventas'],
-                    row['vehiculos_atendidos'],
-                    row['cantidad_volumen_suministrado'],
-                    row['date_update']
-                )
-                for index, row in df.iterrows()
-            ]
-
+            # Update and insert logic
             from psycopg2.extras import execute_values
 
             for value in values:
@@ -158,15 +124,20 @@ def load_data_to_redshift(df, keys):
             execute_values(cursor, insert_query, values)
             print("Datos cargados y actualizados exitosamente en Redshift.")
 
+            if len(values) < keys['min_db']:
+                send_alert_email("Alerta: Datos insertados insuficientes", f"Los datos insertados en la base de datos ({len(values)}) son menores al mínimo requerido ({keys['min_db']}).", keys['from_email'], keys['to_email'])
+
     except psycopg2.Error as e:
-        print(f"Error al conectar o cargar datos en Redshift: {e}")
+        if keys['error_db']:
+            send_alert_email("Error al cargar datos en Redshift", f"Error al conectar o cargar datos en Redshift: {str(e)}", keys['from_email'], keys['to_email'])
+        raise
     finally:
         if conn:
             conn.close()
 
 def ingest_data_to_redshift():
     keys = load_env_variables()
-    df = fetch_data_from_socrata(keys['uri'], keys['token'])
+    df = fetch_data_from_socrata(keys['uri'], keys['token'], keys['min_api'], keys['error_api'], keys['from_email'], keys['to_email'])
     df = transform_data(df)
     load_data_to_redshift(df, keys)
 
