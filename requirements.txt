@@ -5,3 +5,4 @@ SQLAlchemy
 sqlalchemy-redshift
 python-dotenv
 pendulum
+sendgrid
