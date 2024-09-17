@@ -12,7 +12,6 @@ from sendgrid.helpers.mail import Mail
 # Función para cargar variables de entorno
 def load_env_variables(**kwargs):
     load_dotenv('/opt/airflow/dags/.env')
-    global env_variables
     env_variables = {
         'uri': os.getenv('URI'),
         'token': os.getenv('TOKEN'),
@@ -30,8 +29,11 @@ def load_env_variables(**kwargs):
         'error_api': os.getenv('ERRORAPI', 'false').lower() == 'true',  
         'error_db': os.getenv('ERRORDB', 'false').lower() == 'true'  
     }
+    # Empujar las variables al XCom
+    kwargs['ti'].xcom_push(key='env_variables', value=env_variables)
 
 def fetch_data_from_socrata(**kwargs):
+    env_variables = kwargs['ti'].xcom_pull(key='env_variables')
     uri = env_variables['uri']
     token = env_variables['token']
     min_api = env_variables['min_api']
@@ -101,9 +103,17 @@ def transform_data(**kwargs):
     kwargs['ti'].xcom_push(key='transformed_data', value=df.to_json())
 
 def load_data_to_redshift(**kwargs):
+    # Recuperar las variables de entorno del XCom
+    env_variables = kwargs['ti'].xcom_pull(key='env_variables')
+    
     # Recuperar el DataFrame transformado de XCom
     df = pd.read_json(kwargs['ti'].xcom_pull(key='transformed_data'))
-    keys = env_variables  # Obtener las variables de entorno cargadas
+    
+    # Establecer date_update a la fecha y hora actuales
+    date_update = datetime.now()
+
+    # Obtener las variables de entorno cargadas
+    keys = env_variables
     
     try:
         # Conexión a la base de datos Redshift
@@ -183,7 +193,7 @@ def load_data_to_redshift(**kwargs):
                     row['numero_de_ventas'],
                     row['vehiculos_atendidos'],
                     row['cantidad_volumen_suministrado'],
-                    row['date_update']
+                    date_update
                 )
                 for _, row in df.iterrows()
             ]
@@ -195,7 +205,7 @@ def load_data_to_redshift(**kwargs):
                     value[7],  # numero_de_ventas
                     value[8],  # vehiculos_atendidos
                     value[9],  # cantidad_volumen_suministrado
-                    value[10], # date_update
+                    date_update,  # fecha de actualización actual
                     value[1],  # fecha_venta
                     value[2],  # anio_venta
                     value[3],  # mes_venta
@@ -204,7 +214,7 @@ def load_data_to_redshift(**kwargs):
                     value[6]   # longitud
                 ))
 
-                        # Insertar nuevos datos
+            # Insertar nuevos datos
             from psycopg2.extras import execute_values
             execute_values(cursor, insert_query, values)
             print("Datos cargados y actualizados exitosamente en Redshift.")
@@ -219,14 +229,16 @@ def load_data_to_redshift(**kwargs):
         if conn:
             conn.close()
 
+
+
 def send_alert_email(**kwargs):
-    send_email = kwargs['ti'].xcom_pull(key='send_email', default_var=False)
+    send_email = kwargs['ti'].xcom_pull(key='send_email', default=False)
     if send_email:
         subject = kwargs['ti'].xcom_pull(key='email_subject')
         body = kwargs['ti'].xcom_pull(key='email_body')
         message = Mail(
-            from_email=env_variables['from_email'],
-            to_emails=env_variables['to_email'],
+            from_email=kwargs['ti'].xcom_pull(key='env_variables')['from_email'],
+            to_emails=kwargs['ti'].xcom_pull(key='env_variables')['to_email'],
             subject=subject,
             html_content=f"""
                 <html>
@@ -239,11 +251,12 @@ def send_alert_email(**kwargs):
             """
         )
         try:
-            sg = SendGridAPIClient(env_variables['sendgrid_api_key'])
+            sg = SendGridAPIClient(kwargs['ti'].xcom_pull(key='env_variables')['sendgrid_api_key'])
             sg.send(message)
             print("Correo de alerta enviado con éxito.")
         except Exception as e:
             print(f"Error enviando correo de alerta: {str(e)}")
+
 
 # Configuración del DAG
 default_args = {
@@ -300,8 +313,10 @@ send_email_task = PythonOperator(
     task_id='send_alert_email',
     python_callable=send_alert_email,
     provide_context=True,
+    trigger_rule='all_done',  # Ejecutar si todas las tareas anteriores han finalizado, sin importar si fallaron o tuvieron éxito
     dag=dag
 )
 
 # Definición de dependencias entre tareas
-load_env_task >> fetch_data_task >> transform_data_task >> load_data_task >> send_email_task
+load_env_task >> fetch_data_task >> transform_data_task >> load_data_task
+[fetch_data_task, transform_data_task, load_data_task] >> send_email_task
