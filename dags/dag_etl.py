@@ -45,7 +45,7 @@ def send_alert_email(subject, body, from_email, to_email):
         """
     )
     try:
-        sg = SendGridAPIClient(os.getenv('TOKEN2'))
+        sg = SendGridAPIClient(env_variables['sendgrid_api_key'])
         response = sg.send(message)
         print(f"Email enviado, Status Code: {response.status_code}")
     except Exception as e:
@@ -76,9 +76,18 @@ def fetch_data_from_socrata(uri, token, min_api, error_api, from_email, to_email
         raise
 
 def transform_data(df):
-    # Transformación de datos
     df['fecha_venta'] = pd.to_datetime(df['fecha_venta'])
-    # Rest of the transformations
+    df['anio_venta'] = df['anio_venta'].astype('int64')
+    df['mes_venta'] = df['mes_venta'].astype('int64')
+    df['dia_venta'] = df['dia_venta'].astype('int64')
+    df['latitud'] = df['latitud'].astype('float')
+    df['longitud'] = df['longitud'].astype('float')
+    df['eds_activas'] = df['eds_activas'].astype('int64')
+    df['numero_de_ventas'] = df['numero_de_ventas'].astype('int64')
+    df['vehiculos_atendidos'] = df['vehiculos_atendidos'].astype('int64')
+    df['cantidad_volumen_suministrado'] = df['cantidad_volumen_suministrado'].astype('float')
+    df['date_update'] = pd.Timestamp(datetime.now())
+
     df['id_venta'] = (
         df['fecha_venta'].astype(str) + '_' +
         df['anio_venta'].astype(str) + '_' +
@@ -102,11 +111,78 @@ def load_data_to_redshift(df, keys):
         conn.autocommit = True
 
         with conn.cursor() as cursor:
-            # Check for table existence and create if needed
+            # Verificar si la tabla existe
+            cursor.execute(f"""
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = '{keys['redshift_schema']}'
+                AND table_name = 'daily_sales_data';
+            """)
 
-            # Update and insert logic
+            table_exists = cursor.fetchone()[0] == 1
+
+            if not table_exists:
+                cursor.execute(f"""
+                    CREATE TABLE {keys['redshift_schema']}.daily_sales_data (
+                        id_venta BIGINT PRIMARY KEY,
+                        fecha_venta DATE,
+                        anio_venta INT,
+                        mes_venta INT,
+                        dia_venta INT,
+                        latitud FLOAT,
+                        longitud FLOAT,
+                        eds_activas INT,
+                        numero_de_ventas INT,
+                        vehiculos_atendidos INT,
+                        cantidad_volumen_suministrado FLOAT,
+                        date_update TIMESTAMP
+                    );
+                """)
+
+            update_query = f"""
+                UPDATE {keys['redshift_schema']}.daily_sales_data
+                SET eds_activas = %s,
+                    numero_de_ventas = %s,
+                    vehiculos_atendidos = %s,
+                    cantidad_volumen_suministrado = %s
+                WHERE fecha_venta = %s
+                AND anio_venta = %s
+                AND mes_venta = %s
+                AND dia_venta = %s
+                AND latitud = %s
+                AND longitud = %s;
+            """
+
+            insert_query = f"""
+                INSERT INTO {keys['redshift_schema']}.daily_sales_data (
+                    id_venta, fecha_venta, anio_venta, mes_venta, dia_venta, latitud, longitud,
+                    eds_activas, numero_de_ventas, vehiculos_atendidos,
+                    cantidad_volumen_suministrado, date_update
+                ) VALUES %s;
+            """
+
+            # Preparar los valores para insertar/actualizar
+            values = [
+                (
+                    row['id_venta'],
+                    row['fecha_venta'],
+                    row['anio_venta'],
+                    row['mes_venta'],
+                    row['dia_venta'],
+                    row['latitud'],
+                    row['longitud'],
+                    row['eds_activas'],
+                    row['numero_de_ventas'],
+                    row['vehiculos_atendidos'],
+                    row['cantidad_volumen_suministrado'],
+                    row['date_update']
+                )
+                for index, row in df.iterrows()
+            ]
+
             from psycopg2.extras import execute_values
 
+            # Ejecutar actualización
             for value in values:
                 cursor.execute(update_query, (
                     value[6],  # eds_activas
@@ -118,25 +194,37 @@ def load_data_to_redshift(df, keys):
                     value[3],  # mes_venta
                     value[4],  # dia_venta
                     value[5],  # latitud
-                    value[6]   # longitud
+                    value[5]   # longitud
                 ))
 
+            # Ejecutar inserción
             execute_values(cursor, insert_query, values)
             print("Datos cargados y actualizados exitosamente en Redshift.")
 
-            if len(values) < keys['min_db']:
-                send_alert_email("Alerta: Datos insertados insuficientes", f"Los datos insertados en la base de datos ({len(values)}) son menores al mínimo requerido ({keys['min_db']}).", keys['from_email'], keys['to_email'])
+            # Alerta si los valores insertados son cero
+            if len(values) == 0:
+                send_alert_email(
+                    "Alerta: No se insertaron datos",
+                    "No se insertaron datos en la tabla de Redshift.",
+                    keys['from_email'],
+                    keys['to_email']
+                )
 
     except psycopg2.Error as e:
-        if keys['error_db']:
-            send_alert_email("Error al cargar datos en Redshift", f"Error al conectar o cargar datos en Redshift: {str(e)}", keys['from_email'], keys['to_email'])
-        raise
+        print(f"Error al conectar o cargar datos en Redshift: {e}")
+        # Enviar alerta si hay un error de conexión
+        send_alert_email(
+            "Error al cargar datos en Redshift",
+            f"Error al conectar o cargar datos en Redshift: {e}",
+            keys['from_email'],
+            keys['to_email']
+        )
     finally:
         if conn:
             conn.close()
 
 def ingest_data_to_redshift():
-    keys = load_env_variables()
+    keys = env_variables
     df = fetch_data_from_socrata(keys['uri'], keys['token'], keys['min_api'], keys['error_api'], keys['from_email'], keys['to_email'])
     df = transform_data(df)
     load_data_to_redshift(df, keys)
