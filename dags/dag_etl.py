@@ -224,7 +224,7 @@ def load_data_to_redshift(df, keys):
             conn.close()
 
 def ingest_data_to_redshift():
-    keys = env_variables
+    keys = load_env_variables()
     df = fetch_data_from_socrata(keys['uri'], keys['token'], keys['min_api'], keys['error_api'], keys['from_email'], keys['to_email'])
     df = transform_data(df)
     load_data_to_redshift(df, keys)
